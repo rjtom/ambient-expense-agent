@@ -34,12 +34,13 @@ from expense_agent import config
 
 class Decision(BaseModel):
     approved: str
+    reason: str = "No reason provided."
 
     @model_validator(mode="before")
     @classmethod
     def coerce_from_string(cls, data: Any) -> Any:
         if isinstance(data, str):
-            return {"approved": data}
+            return {"approved": data, "reason": "No reason provided."}
         return data
 
 
@@ -70,6 +71,7 @@ def parse_event_node(node_input: Any) -> dict:
     """Extracts and parses the expense data payload from the arriving event.
 
     Handles both base64-encoded Pub/Sub data payloads and direct plain JSON.
+    If the input is natural language text, it uses Gemini to extract structured fields.
     """
     raw_data = ""
 
@@ -82,12 +84,47 @@ def parse_event_node(node_input: Any) -> dict:
         return parse_payload_dict(node_input)
 
     if raw_data:
+        # 1. Try direct JSON parsing
         try:
             parsed = json.loads(raw_data)
             if isinstance(parsed, dict):
                 return parse_payload_dict(parsed)
         except Exception:
             pass
+
+        # 2. Fallback: Parse natural language text into a structured JSON using Gemini
+        try:
+            client = get_genai_client()
+            prompt = f"""
+            Extract structured expense details from the following natural language request. 
+            CRITICAL: The 'description' field MUST contain the exact details, remarks, and raw text of the receipt/description word-for-word, including any sensitive numbers (like SSNs, credit cards, or passwords) mentioned in the input, without summarizing or omitting them.
+            If some details (like date or submitter) are missing, use "2026-06-18" for date and "user@company.com" for submitter.
+            
+            Request: {raw_data}
+            """
+            response = client.models.generate_content(
+                model=config.MODEL_NAME,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=types.Schema(
+                        type=types.Type.OBJECT,
+                        properties={
+                            "amount": types.Schema(type=types.Type.NUMBER),
+                            "submitter": types.Schema(type=types.Type.STRING),
+                            "category": types.Schema(type=types.Type.STRING),
+                            "description": types.Schema(type=types.Type.STRING),
+                            "date": types.Schema(type=types.Type.STRING)
+                        },
+                        required=["amount", "submitter", "category", "description", "date"]
+                    )
+                )
+            )
+            parsed = json.loads(response.text)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception as e:
+            print(f"⚠️ Failed to parse natural language using Gemini: {e}")
 
     return {}
 
@@ -166,6 +203,13 @@ def security_checkpoint_node(node_input: dict) -> dict:
     is_injection = any(keyword in desc_lower for keyword in INJECTION_KEYWORDS)
     payload["prompt_injection_flagged"] = is_injection
 
+    # If any sensitive PII is found, fail validation immediately to halt workflow execution
+    if redacted_categories:
+        raise ValueError(
+            f"🚨 SECURITY CHECKPOINT FAILED: Sensitive PII ({', '.join(redacted_categories)}) "
+            "detected in description. Workflow execution blocked for policy compliance."
+        )
+
     return payload
 
 
@@ -187,8 +231,33 @@ async def routing_and_review_node(
     description = node_input.get("description", "No description")
     date = node_input.get("date", "Unknown Date")
     is_injection = node_input.get("prompt_injection_flagged", False)
+    redacted_categories = node_input.get("redacted_categories", [])
+    has_pii = len(redacted_categories) > 0
 
-    # Rule: If prompt injection is flagged, bypass LLM and route straight to Human
+    # Rule: If PII violations are flagged, immediately block and auto-reject (the workflow should not execute)
+    if has_pii:
+        risk_analysis = f"🚨 SECURITY BLOCKED: Highly sensitive PII ({', '.join(redacted_categories)}) detected in description. Workflow execution blocked for policy compliance."
+        ctx.state["risk_analysis"] = risk_analysis
+        yield Event(
+            content=types.Content(
+                role="model",
+                parts=[
+                    types.Part.from_text(
+                        text=f"🚨 SECURITY BLOCKED: This expense has been auto-rejected because it contains highly sensitive PII ({', '.join(redacted_categories)}) inside the description. Workflow execution blocked."
+                    )
+                ],
+            ),
+            output={
+                "expense": node_input,
+                "approved": False,
+                "status": "REJECTED (PII VIOLATION)",
+                "risk_rating": "HIGH (PII VIOLATION)",
+                "risk_analysis": risk_analysis,
+            },
+        )
+        return
+
+    # Rule: If prompt injection is flagged, bypass LLM and route straight to Human review
     if is_injection:
         risk_analysis = (
             "⚠️ SECURITY ALERT: Prompt injection attempt detected in description! "
@@ -203,12 +272,12 @@ async def routing_and_review_node(
                 f"Submitter: {submitter}\n"
                 f"Amount: ${amount:.2f}\n"
                 f"Description: [REDACTED FOR SECURITY]\n\n"
-                f"Do you approve or reject this expense anyway? (approve/reject):"
+                f"Do you approve or reject this expense anyway? Please provide your decision and justification/reason (approve/reject):"
             )
             yield RequestInput(interrupt_id="approved", message=message, response_schema=Decision)
             return
 
-    # Rule: Under $100 and no prompt injection -> Auto-approve instantly (no LLM, no HITL)
+    # Rule: Under $100 and no prompt injection or PII violations -> Auto-approve instantly (no LLM, no HITL)
     elif amount < config.THRESHOLD_AMOUNT:
         yield Event(
             content=types.Content(
@@ -267,15 +336,17 @@ async def routing_and_review_node(
             f"Description: {description}\n\n"
             f"--- LLM Risk Judgment ({config.MODEL_NAME}) ---\n"
             f"{risk_analysis}\n\n"
-            f"Do you approve or reject this expense? (approve/reject):"
+            f"Do you approve or reject this expense? Please provide your decision and justification/reason (approve/reject):"
         )
         yield RequestInput(interrupt_id="approved", message=message, response_schema=Decision)
         return
 
     # 2. Process human response upon resume
     val = ctx.resume_inputs["approved"]
+    user_reason = "No reason provided."
     if isinstance(val, dict):
         user_decision = val.get("approved") or val.get("value") or val.get("response") or ""
+        user_reason = val.get("reason") or "No reason provided."
     else:
         user_decision = str(val)
     user_decision = user_decision.strip().lower()
@@ -284,9 +355,11 @@ async def routing_and_review_node(
     if is_injection:
         status = "SECURITY WARNING - " + status
     risk_analysis = ctx.state.get("risk_analysis", "Manual manager decision")
+    risk_analysis += f"\n\n[Manager Review Reason]: {user_reason}"
 
     ctx.state["approved"] = approved
     ctx.state["status"] = status
+    ctx.state["risk_analysis"] = risk_analysis
 
     yield Event(
         content=types.Content(
