@@ -1,0 +1,42 @@
+#!/bin/bash
+# Script to start the expense-agent backend and playground
+
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJECT_DIR"
+
+echo "=== Starting Expense Agent Infrastructure ==="
+
+# 1. Start Fast API web service on port 9500
+if lsof -i :9500 >/dev/null 2>&1; then
+  echo "⚠️ Warning: Port 9500 is already in use. Web service might already be running."
+else
+  echo "🚀 Starting FastAPI Web Service on port 9500..."
+  uv run python -m expense_agent.fast_api_app > server.log 2>&1 &
+  echo "   Web service logs are writing to server.log"
+fi
+
+# 2. Start ADK Playground on port 8085
+if lsof -i :8085 >/dev/null 2>&1; then
+  echo "⚠️ Warning: Port 8085 is already in use. ADK Playground might already be running."
+else
+  echo "🎨 Starting ADK Playground on port 8085..."
+  uv run agents-cli playground --port 8085 > playground.log 2>&1 &
+  echo "   Playground logs are writing to playground.log"
+fi
+
+echo "⌛ Waiting for services to initialize..."
+sleep 3
+
+echo "=== Status ==="
+if lsof -i :9500 >/dev/null 2>&1; then
+  echo "✅ FastAPI Web Service is UP on http://localhost:9500"
+else
+  echo "❌ FastAPI Web Service FAILED to start. Check server.log"
+fi
+
+if lsof -i :8085 >/dev/null 2>&1; then
+  echo "✅ ADK Playground is UP on http://localhost:8085"
+else
+  echo "❌ ADK Playground FAILED to start. Check playground.log"
+fi
+echo "=========================================="

@@ -1,0 +1,43 @@
+#!/bin/bash
+# Script to stop the expense-agent backend, playground, and supporting components
+
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJECT_DIR"
+
+echo "=== Stopping Expense Agent Infrastructure ==="
+
+# 1. Stop FastAPI web service on port 9500
+PID_9500=$(lsof -t -i :9500 2>/dev/null)
+if [ -n "$PID_9500" ]; then
+  echo "🛑 Stopping FastAPI Web Service (PID: $PID_9500)..."
+  kill $PID_9500
+  sleep 1
+  # Force kill if still alive
+  if kill -0 $PID_9500 2>/dev/null; then
+    echo "⚠️ Force-killing FastAPI Web Service..."
+    kill -9 $PID_9500
+  fi
+  echo "✅ FastAPI Web Service stopped."
+else
+  echo "ℹ️ FastAPI Web Service is not running on port 9500."
+fi
+
+# 2. Stop ADK Playground on port 8085
+PID_8085=$(lsof -t -i :8085 2>/dev/null)
+if [ -n "$PID_8085" ]; then
+  echo "🛑 Stopping ADK Playground (PID: $PID_8085)..."
+  kill $PID_8085
+  sleep 1
+  # Force kill if still alive
+  if kill -0 $PID_8085 2>/dev/null; then
+    echo "⚠️ Force-killing ADK Playground..."
+    kill -9 $PID_8085
+  fi
+  echo "✅ ADK Playground stopped."
+else
+  echo "ℹ️ ADK Playground is not running on port 8085."
+fi
+
+echo "=== Infrastructure Cleaned ==="
+lsof -i :9500 -i :8085 2>/dev/null || echo "🎉 All services stopped successfully."
+echo "============================================"
