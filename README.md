@@ -1,5 +1,7 @@
 # Ambient Expense-Approval Agent (`expense-agent`)
 
+[![Watch Expense Agent Walkthrough](https://cdn.loom.com/sessions/thumbnails/4787710be04c4b2790c8f0d47dd109ba-with-play.gif)](https://www.loom.com/share/4787710be04c4b2790c8f0d47dd109ba)
+
 An intelligent, secure, enterprise-grade AI expense-approval assistant built on the Google Agent Development Kit (ADK 2.0). It automates high-volume, low-risk approvals while enforcing safety guardrails and robust human-in-the-loop (HITL) escalations.
 
 ---
