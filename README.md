@@ -55,6 +55,25 @@ It concludes with a risk rating (**LOW**, **MEDIUM**, or **HIGH**) and a detaile
 
 ---
 
+## ⚡ API Services & Integrations
+
+The FastAPI application (`expense_agent/fast_api_app.py`) provides robust, production-ready endpoints:
+
+### 1. Pub/Sub Push Ingestion (`/` and `/pubsub`)
+A high-throughput ingestion endpoint designed for Pub/Sub push subscriptions:
+* **Payload Normalization**: Automatically decodes base64 data payloads (standard in Pub/Sub) and parses raw plain JSON strings.
+* **Subscription Path Normalization**: Automatically parses long subscription resource paths (e.g., `projects/my-project/subscriptions/ambient-expense-sub` is normalized to a clean session identifier `ambient-expense-sub`).
+* **Active Session Persistence**: Creates or retrieves a persistent SQLite-backed session record, executes the ADK workflow, and returns standard success, output, and interruption indicators.
+
+### 2. Shared SQLite Database Sync
+The FastAPI backend and the ADK 2.0 playground share a single Sqlite session database (`expense_agent/.adk/session.db`). 
+* This allows background Pub/Sub actions, human approvals, and interactive model logs to **sync seamlessly in real-time** between the command-line, web endpoints, and the playground interface.
+
+### 3. User Feedback Endpoint (`/feedback`)
+Accepts user comments and sentiment feedback regarding the agent's performance, serializing the data via a structured Pydantic model (`Feedback`) for downstream analytics and refinement.
+
+---
+
 ## 📊 Local Evaluation & Quality Flywheel
 
 To maintain maximum reliability, the agent includes an automated local evaluation suite to verify both **routing correctness** and **security containment**.
