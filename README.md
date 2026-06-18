@@ -4,6 +4,10 @@
 
 An intelligent, secure, enterprise-grade AI expense-approval assistant built on the Google Agent Development Kit (ADK 2.0). It automates high-volume, low-risk approvals while enforcing safety guardrails and robust human-in-the-loop (HITL) escalations.
 
+> [!WARNING]
+> **Experimental & Imaginative/Fictional Disclaimer**: 
+> This project is completely experimental. All features, data, and integrations are entirely imaginative/fictional and designed solely for demonstration, prototyping, and educational purposes. Licensed under the [MIT License](LICENSE) (including this disclaimer).
+
 ---
 
 ## 🏗️ System Architecture
